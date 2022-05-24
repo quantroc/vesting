@@ -8,22 +8,13 @@ describe ("Vesting Contract", function () {
   beforeEach(async function(){
       [owner, addr1, addr2, addr3, ...addr4] = await ethers.getSigners();
       let utcTimestamp = new Date().getTime();
-      utcTimestamp = 1498140000;
+      utcTimestamp = 1653367140;
 
       QuanToken = await ethers.getContractFactory("QuanToken");
       quanToken = await QuanToken.deploy();
 
       Vesting = await ethers.getContractFactory("Vesting");
-      vesting = await Vesting.deploy(
-          quanToken.address, 
-          20, 
-          utcTimestamp , 
-          5, 
-          2, 
-          2,  
-          ethers.BigNumber.from(1000).mul(decimals)
-      );
-      console.log("timestamp: ",utcTimestamp);
+      vesting = await Vesting.deploy();
   });
   
   it("Check Claim Function", async function(){

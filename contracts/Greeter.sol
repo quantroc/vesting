@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./QuanToken.sol";
 
-contract Vesting is QuanToken, Ownable{
+contract Vesting is Ownable{
     //using SafeMath for uint256;
     uint256 public firstRelease;
     uint256 public startTime = block.timestamp;
@@ -37,8 +37,7 @@ contract Vesting is QuanToken, Ownable{
     }
 
     function fundVesting() public onlyOwner {
-        approve(address(this),totalToken);
-        transfer(address(this),totalToken);
+        token.transfer(address(this),totalToken);
     }
 
     function whilteList(address buyer, uint256 _amount) external {
@@ -52,13 +51,13 @@ contract Vesting is QuanToken, Ownable{
         uint256 tokenClaimPerPeriod = buyerInfo[msg.sender].amount * 80 / 100 / totalPeriods;
         if(time < firstRelease + cliff){
                         tokenClaimable = buyerInfo[msg.sender].amount * 20 / 100;
-            transfer(msg.sender,tokenClaimable);
+            token.transfer(msg.sender,tokenClaimable);
             buyerInfo[msg.sender].tokenClaimed = tokenClaimable;
         } else {
             tokenClaimable += tokenClaimPerPeriod*((time-startTime)/timePerPeriods);
             startTime = startTime + ((time-startTime)/timePerPeriods) * timePerPeriods;
             totalPeriods = totalPeriods - ((time-startTime)/timePerPeriods);
-            transfer(msg.sender,tokenClaimable);
+            token.transfer(msg.sender,tokenClaimable);
             buyerInfo[msg.sender].tokenClaimed += tokenClaimable;
         }
     }

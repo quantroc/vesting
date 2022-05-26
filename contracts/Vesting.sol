@@ -1,64 +1,133 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./QuanToken.sol";
 
-contract Vesting is Ownable{
-    //using SafeMath for uint256;
-    uint256 public firstRelease;
-    uint256 public startTime = block.timestamp;
-    uint256 public totalPeriods;
-    uint256 public timePerPeriods;
-    uint256 public cliff;
-    uint256 public totalToken;
-    QuanToken public token;
-
-    struct BuyerInfo{
+contract TokenVesting is Ownable {
+    using SafeMath for uint256;
+    // Info of each user
+    struct UserInfo {
         uint256 amount;
-        uint256 tokenClaimed;
+        uint256 tokensClaimed;
     }
-    mapping(address => BuyerInfo) public buyerInfo;
+
+    // mapping user info by address
+    mapping(address => UserInfo) public userInfo;
+
+    QuanToken public token;
+    uint256 public firstRelease;
+    uint256 public startTime;
+    uint256 public totalPeriods;
+    uint256 public timePerPeriod;
+    uint256 public cliff;
+    uint256 public totalTokens;
+
+    event TokenClaimed(address _address, uint256 tokensClaimed);
+    event VestingFunded(uint256 totalTokens);
+    event SetStartTime(uint256 _startTime);
+    event AddWhitelistUser(address _address, uint256 _amount);
+    event RemoveWhitelistUser(address _address);
+
+    /**
+     *@dev constructor
+     *@param _token address of BEP20 token
+     *@param _firstRelease in percent for percent of total tokens that user will receive at first claim, 100 = 1%
+     *@param _startTime moment when releasing the first 20% of the tokens
+     *@param _cliff delay (seconds) from _startTime after that monthly vesting starts
+     *@param _totalPeriods total amount of vesting periods
+     *@param _timePerPeriod time in seconds for every vesting period
+     */
     constructor(
-        address _token, //token dung
-        uint256 _firstRelease, // block.timestamp : khởi tạo smartcontract
-        uint256 _startTime,// thời gian bắt đầu trả dần
-        uint256 _cliff, // khoang thoi gian token bi khoa
-        uint256 _totalPeriod, //khoảng thời gian còn lại sau khi nhận 20% VD: 8 tháng
-        uint256 _timePerPeriods, // khoảng thời gian giữa các lần claim còn lại VD: 1 tháng
-        uint256 _totalToken
+        address _token,
+        uint256 _firstRelease,
+        uint256 _startTime,
+        uint256 _cliff,
+        uint256 _totalPeriods,
+        uint256 _timePerPeriod
     ) {
+        require(_token != address(0), "zero address not allowed");
+        require(_firstRelease <= 10000, "_firstRelease must less than 10000");
+        require(_totalPeriods > 0, "_totalPeriods must greater than 0");
+        require(_startTime > block.timestamp, "_startTime must greater than current time");
+        require(_timePerPeriod > 0, "_timePerPeriod must greater than 0");
+
         token = QuanToken(_token);
         firstRelease = _firstRelease;
         startTime = _startTime;
-        totalPeriods = _totalPeriod;
-        timePerPeriods = _timePerPeriods;
         cliff = _cliff;
-        totalToken = _totalToken;
+        totalPeriods = _totalPeriods;
+        timePerPeriod = _timePerPeriod;
     }
 
-    function fundVesting() public onlyOwner {
-        token.transfer(address(this),totalToken);
+    /**
+     * @dev function responsible for supplying tokens that will be vested
+     * @param _totalTokens amount of tokens that will be supplied to this contract
+     */
+    function fundVesting(uint256 _totalTokens) public onlyOwner {
+        require(token.allowance(msg.sender, address(this)) == _totalTokens, "Not allow spend GRBE token");
+        totalTokens = totalTokens.add(_totalTokens);
+        token.transferFrom(msg.sender, address(this), _totalTokens);
+        emit VestingFunded(_totalTokens);
     }
 
-    function whilteList(address buyer, uint256 _amount) external {
-        buyerInfo[buyer].amount = _amount;
-        buyerInfo[buyer].tokenClaimed = 0; 
-    }
+    /**
+     * @dev function that allows receiver to claim tokens, can be called only by receiver
+     */
+    function claimTokens() public {
+        require(totalTokens > 1000000, "Vesting has not been funded yet");
+        address _sender = msg.sender;
+        UserInfo storage user = userInfo[_sender];
+        require(user.amount > user.tokensClaimed.add(1), "All tokens claimed or not whitelist");
+        require(block.timestamp > startTime, "Vesting hasn't started yet");
 
-    function claim() public {
-        uint256 time = block.timestamp;
-        uint256 tokenClaimable = 0;
-        uint256 tokenClaimPerPeriod = buyerInfo[msg.sender].amount * 80 / 100 / totalPeriods;
-        if(time < firstRelease + cliff){
-                        tokenClaimable = buyerInfo[msg.sender].amount * 20 / 100;
-            token.transfer(msg.sender,tokenClaimable);
-            buyerInfo[msg.sender].tokenClaimed = tokenClaimable;
+        uint256 timePassed = block.timestamp.sub(startTime);
+        uint256 firstClaim = user.amount.mul(firstRelease).div(10000);
+        if (timePassed < cliff) {
+            require(user.tokensClaimed == 0, "tokens claimed");
+            user.tokensClaimed = user.tokensClaimed.add(firstClaim);
+            totalTokens = totalTokens.sub(firstClaim);
+            token.transfer(_sender, firstClaim);
+            emit TokenClaimed(_sender, firstClaim);
         } else {
-            tokenClaimable += tokenClaimPerPeriod*((time-startTime)/timePerPeriods);
-            startTime = startTime + ((time-startTime)/timePerPeriods) * timePerPeriods;
-            totalPeriods = totalPeriods - ((time-startTime)/timePerPeriods);
-            token.transfer(msg.sender,tokenClaimable);
-            buyerInfo[msg.sender].tokenClaimed += tokenClaimable;
+            timePassed = timePassed.sub(cliff);
+            uint256 time = timePassed.div(timePerPeriod).add(1);
+            if (time > totalPeriods) {
+                time = totalPeriods;
+            }
+
+            uint256 _amount = user.amount.sub(firstClaim);
+            uint256 tokensToClaim = _amount.mul(time).div(totalPeriods).add(firstClaim).sub(user.tokensClaimed);
+
+            user.tokensClaimed = user.tokensClaimed.add(tokensToClaim);
+            totalTokens = totalTokens.sub(tokensToClaim);
+            token.transfer(_sender, tokensToClaim);
+
+            emit TokenClaimed(_sender, tokensToClaim);
         }
+    }
+
+    function setStartTime(uint256 _startTime) public onlyOwner {
+        startTime = _startTime;
+
+        emit SetStartTime(_startTime);
+    }
+
+    function addWhitelistUser(address _address, uint256 _amount) public onlyOwner {
+        require(block.timestamp < startTime, "Vesting has started, cannot add whitelist");
+        UserInfo storage user = userInfo[_address];
+        user.amount = _amount;
+        user.tokensClaimed = 0;
+
+        emit AddWhitelistUser(_address, _amount);
+    }
+
+    function removeWhitelistUser(address _address) public onlyOwner {
+        delete userInfo[_address];
+
+        emit RemoveWhitelistUser(_address);
     }
 }
